@@ -1,5 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
 import os
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
@@ -9,74 +11,112 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.chains import create_retrieval_chain
 from langchain_community.vectorstores.faiss import FAISS
+from langchain_core.messages import HumanMessage,AIMessage  
+from langchain_core.prompts import MessagesPlaceholder
+from langchain.chains.history_aware_retriever import create_history_aware_retriever
 
-#get info/documets from the web 
+
+#Load documents from a web URL
 def get_documents_from_web(url):
     loader = WebBaseLoader(url)
-    documet = loader.load()
+    documents = loader.load()
 
-    spliter = RecursiveCharacterTextSplitter(
-        chunk_size = 200,
-        chunk_overlap = 20
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=400,
+        chunk_overlap=20
     )
-    splitdoc =  spliter.split_documents(documet)
-    print(len(splitdoc))
-    return splitdoc
+    split_docs = splitter.split_documents(documents)
+    print(f"split {len(split_docs)} documents.")
+    return split_docs
 
-
-#create vectorestore
-def create_vector(docs):
-    embedding = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vector_store = FAISS.from_documents(docs,embedding=embedding)
+#Create FAISS vector store with HuggingFace embeddings
+def create_vector_store(docs):
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    vector_store = FAISS.from_documents(docs, embedding=embeddings)
     return vector_store
 
-#create retrival chain
+#Create LangChain Retrieval Chain (Retriever + LLM)
 def create_chain(vector_store):
-    api_key = os.getenv('GROQ_API_KEY')
+    api_key = os.getenv("GROQ_API_KEY")
     llm = ChatGroq(
         groq_api_key=api_key,
-        model_name='llama3-8b-8192'  
+        model_name="llama3-8b-8192"
     )
 
-    template = '''
-    answer the user questions
+    template = """
+    Answer the user's question as best as you can using the context below.
 
-    context: {context}
-    User: {input}
+    Context:
+    {context}
 
+    User Question:
+    {input}
+    """
+    #added chathistory with human and ai 
+    prompt = ChatPromptTemplate.from_messages([
+        ('system', "Answer the user's question as best as you can using the context: {context}"),
+        MessagesPlaceholder(variable_name='chat_history'),
+        ('human', '{input}')
+    ])
 
-    '''
+    #Stuff the documents into the LLM with the prompt
+    doc_chain = create_stuff_documents_chain(
+        llm=llm,
+        prompt=prompt
+    )
 
-    prompt = ChatPromptTemplate.from_template(template)
+    retriever = vector_store.as_retriever(search_kwargs={"k": 3})
 
-    # chain = prompt | llm
-    chain = create_stuff_documents_chain(
-        llm= llm,
-        prompt= prompt
-        )
+    retriever_prompt = ChatPromptTemplate.from_messages([
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{input}"),
+        ("human", "Given the above conversation, generate a search query to look up in order to get information relevant to the conversation")
+  
 
-    retreiver = vector_store.as_retriever(search_kwargs={'k':2}) #returns relevent documents, can be set to how ever documents user wants > search_kwargs={'k':2} 2 relevents documents will be returned
+    ])
+
+    #Create a history-aware retriever so the chatbot becomes more efficient and responds appropriately based on the user's input
+    history_aware_retriver = create_history_aware_retriever(
+        llm=llm,
+        retriever=retriever,
+        prompt=retriever_prompt
+    )
+    #Create full retrieval-augmented generation chain
     reteivel_chain = create_retrieval_chain(
-        retreiver,
-        chain,
+        retriever=history_aware_retriver,
+        combine_docs_chain=doc_chain
     )
 
     return reteivel_chain
 
 
-#doc from web
-doc = get_documents_from_web('https://python.langchain.com/docs/concepts/lcel/')
+def procces_chat(chain,question,chat_history):
+    #Ask a question
+    response = chain.invoke({"input":question,
+                             'chat_history':chat_history})
 
-#vectore store
-vectore_store = create_vector(doc)
-
-#retrival chain
-chain = create_chain(vectore_store)
-
+    # Step 5: Print final answer
+    return response["answer"]
 
 
+# === RUN EVERYTHING ===
 
-response = chain.invoke({'input':'what is LCEL',
-                         })
+#Load web documents
+docs = get_documents_from_web("https://python.langchain.com/docs/concepts/lcel/")
 
-print(response['context'])
+#Create vector store
+vector_store = create_vector_store(docs)
+
+#Create chain
+chain = create_chain(vector_store)
+
+chat_history = []
+#user can now question in the terminal 
+while True:
+    user = input('You: ')
+    if user.lower() == 'exit':
+        break
+    response = procces_chat(chain,user,chat_history)
+    chat_history.append(HumanMessage(content=user))
+    chat_history.append(AIMessage(content=response))
+    print(f'Chatbot: {response}')
