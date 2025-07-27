@@ -10,13 +10,20 @@ def open_conn(db_path):
     except Error as e:
         raise(e)
 
-def run_sql(conn, sql_path):
+def read_sql(sql_path):
     try:
         f = open(sql_path,"r")
         out = f.read()
         f.close()
+        return out
+    except Error as e:
+        raise(e)
+
+def run_sql(conn, sql_code):
+    try:
         cursor = conn.cursor()
-        cursor.executescript(out)
+        cursor.executescript(sql_code)
+        return cursor.fetchall()
     except Error as e:
         raise(e)
 
@@ -24,7 +31,7 @@ def close_conn(conn):
     conn.close()
 
 def main():
-    print("Call read.db from main")
+    print("Call functions from main for now")
 
 if __name__ == "__main__":
     main()
