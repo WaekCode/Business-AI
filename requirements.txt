@@ -7,3 +7,5 @@ langchain_huggingface
 pandas
 bs4
 sentence_transformers
+faiss-cpu
+psycopg2-binary
