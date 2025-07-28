@@ -5,8 +5,8 @@ import sqlite3
 def main():
     args = sys.argv[1:]
     if len(args) >= 1:
+        out = runsql.read_sql(f"sql/{args[0]}.sql")
         db = runsql.open_conn(f"db/{args[0]}.db")
-        out = runsql.read_sql( f"sql/{args[0]}.sql")
         out1 = runsql.run_sql(db, out)
         print(out1)
         if len(args) >= 2:
